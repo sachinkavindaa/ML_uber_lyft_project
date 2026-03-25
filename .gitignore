@@ -1,0 +1,9 @@
+data/
+# Jupyter checkpoints
+.ipynb_checkpoints/
+# Python cache
+__pycache__/
+# Mac system files
+.DS_Store
+# Logs
+*.log
