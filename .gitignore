@@ -1,4 +1,3 @@
-data/
 # Jupyter checkpoints
 .ipynb_checkpoints/
 # Python cache
