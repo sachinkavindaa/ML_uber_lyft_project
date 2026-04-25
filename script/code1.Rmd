@@ -1,0 +1,150 @@
+---
+title: "sc3"
+output: html_document
+date: "2026-04-22"
+---
+
+## Single-Cell Consensus Clustering
+
+Single-cell RNA sequencing (scRNA-seq) is a powerful method used to study gene expression at the level of individual cells. One important challenge in scRNA-seq analysis is identifying groups of similar cells through clustering. In this study, we reproduce the work of Kiselev et al. (2017), who developed the SC3 (Single-Cell Consensus Clustering) method for accurate and stable clustering of single-cell data.
+
+For demonstration, we use the Yan et al. (2013) dataset, which contains gene expression data from 90 human embryonic cells across 7 developmental stages. This dataset is widely used as a benchmark for clustering methods because the true cell labels are known. By applying SC3, we aim to identify meaningful cell groups and compare the clustering results with the known developmental stages.
+
+### Install libraries and packages
+
+``` r
+{if (!requireNamespace("BiocManager", quietly = TRUE))}
+    install.packages("BiocManager")
+  
+  BiocManager::install(c("SC3", "scater", "SingleCellExperiment"), ask = FALSE)
+  if (!requireNamespace("mclust", quietly = TRUE))
+    install.packages("mclust") 
+```
+
+```{r}
+library(SC3)
+library(scater)
+library(SingleCellExperiment)
+library(mclust)
+```
+
+### Load the data
+
+```{r}
+data("yan")
+```
+
+### Check data set dimension
+
+```{r}
+cat("Matrix dimensions (genes x cells):", dim(yan), "\n")
+cat("\nRaw column names (first 6):\n")
+print(head(colnames(yan)))
+```
+
+The Yan dataset contains gene expression values for 20,214 genes measured in 90 single cells. The cells belong to different human embryo developmental stages such as Oocyte and Zygote.
+
+### Extract Cell Stages
+
+This function extracts embryo developmental stage labels from cell names. It is used to create known labels for evaluating clustering accuracy.
+
+```{r}
+extract_stage <- function(name) {
+    if      (grepl("Oocyte",name, ignore.case = TRUE)) "Oocyte"
+    else if (grepl("Zygote",name, ignore.case = TRUE)) "Zygote"
+    else if (grepl("Morula",name, ignore.case = TRUE)) "Morula"
+    else if (grepl("16.cell|X16|16cell",name, ignore.case = TRUE)) "16cell"
+    else if (grepl("2.cell|X2.cell|2cell",name, ignore.case = TRUE)) "2cell"
+    else if (grepl("4.cell|X4.cell|4cell",name, ignore.case = TRUE)) "4cell"
+    else if (grepl("8.cell|X8.cell|8cell",name, ignore.case = TRUE)) "8cell"
+    else if (grepl("Late.*blast|blast.*late",name, ignore.case = TRUE)) "Late_blastocyst"
+    else if (grepl("Mid.*blast|blast.*mid",name, ignore.case = TRUE)) "Mid_blastocyst"
+    else if (grepl("Early.*blast|blast.*early",name, ignore.case = TRUE)) "Early_blastocyst"
+    else if (grepl("blast",name, ignore.case = TRUE)) "Blastocyst"
+    else "Unknown"
+  }
+```
+
+```{r}
+cell_labels <- sapply(colnames(yan), extract_stage)
+print(table(cell_labels))
+```
+
+```{r}
+  unknown_names <- colnames(yan)[cell_labels == "Unknown"]
+  if (length(unknown_names) > 0) {
+    cat("\nWARNING - unmatched cell names:\n")
+    print(unknown_names)
+  } else {
+    cat("\nAll 90 cells labelled successfully. No unknowns.\n")
+  }
+```
+
+This step converts the Yan dataset into a SingleCellExperiment object. It stores gene expression counts and cell labels in one organized structure required for SC3 analysis.
+
+```{r}
+ sce <- SingleCellExperiment(
+    assays  = list(counts = as.matrix(yan)),
+    colData = DataFrame(cell_type1 = cell_labels)
+  )
+```
+
+### Normalisation
+
+This step normalizes the raw gene counts across cells and applies a log transformation, making the expression data more balanced and suitable for clustering analysis.
+
+```{r}
+sce <- logNormCounts(sce)
+```
+
+This code prepares the gene names for SC3 analysis and removes duplicate genes.
+
+```{r}
+rowData(sce)$feature_symbol <- rownames(sce)
+sce <- sce[!duplicated(rowData(sce)$feature_symbol), ]
+```
+
+```{r}
+sce <- sc3(sce, ks = 3:10, biology = TRUE, n_cores = 1)
+
+# ---- Find best k using ARI ----
+ari_results <- data.frame(k = 3:10, ARI = NA)
+
+for (i in seq_along(ari_results$k)) {
+  k <- ari_results$k[i]
+  clusters <- colData(sce)[[paste0("sc3_", k, "_clusters")]]
+  ari_results$ARI[i] <- adjustedRandIndex(cell_labels, clusters)
+}
+```
+
+```{r}
+print(ari_results)
+
+best_k <- ari_results$k[which.max(ari_results$ARI)]
+best_ari <- max(ari_results$ARI)
+
+cat(sprintf("\nBest k = %d with ARI = %.4f\n", best_k, best_ari))
+
+}
+```
+
+```{r}
+final_clusters <- colData(sce)[[paste0("sc3_", best_k, "_clusters")]]
+
+cat("\nFinal SC3 cluster counts:\n")
+print(table(final_clusters))
+
+cat("\nFinal cluster vs true cell stage:\n")
+print(table(SC3 = final_clusters, Truth = cell_labels))
+
+```
+
+### Visualize results using best k
+
+```{r}
+sc3_plot_consensus(sce, k = best_k, show_pdata = "cell_type1")
+sc3_plot_markers(sce, k = best_k, show_pdata = "cell_type1")
+sc3_plot_de_genes(sce, k = best_k, show_pdata = "cell_type1")
+
+
+```
